@@ -172,6 +172,13 @@ def get_user_profile(user_id: str) -> Dict[str, Any]:
         print(f"Error getting user profile: {e}")
         return None
 
+# NEW HELPER FUNCTION - This is the key fix!
+def get_user_name_from_telegram_id(telegram_user_id: str) -> str:
+    """Get the registered user_name from telegram user_id"""
+    if telegram_user_id in registered_users:
+        return registered_users[telegram_user_id].get("user_name", telegram_user_id)
+    return telegram_user_id
+
 def get_conversation_history(user_name: str) -> list:
     """Get conversation history using LangChain Neo4j memory"""
     try:
@@ -205,7 +212,7 @@ def add_to_conversation(user_name: str, human_message: str = None, ai_message: s
         
         if human_message:
             chat_memory.add_user_message(human_message)
-            print(f" Added human message for {user_name}")
+            print(f"Added human message for {user_name}")
         
         if ai_message:
             chat_memory.add_ai_message(ai_message)
@@ -403,7 +410,9 @@ def diagnose_leaf(state: PestState) -> Dict[str, Any]:
     if not description:
         return {"error": "No description available for diagnosis.", "user_id": user_id}
     
-    context = get_relevant_context(user_id, description)
+    # FIXED: Get the actual user_name for context retrieval
+    user_name = get_user_name_from_telegram_id(user_id)
+    context = get_relevant_context(user_name, description)
     
     memory_context = ""
     if context:
@@ -467,7 +476,9 @@ def process_query(state: QueryState) -> Dict[str, Any]:
     if not query_text:
         return {"error": "No query text provided.", "user_id": user_id}
     
-    context = get_relevant_context(user_id, query_text)
+    # FIXED: Get the actual user_name for context retrieval
+    user_name = get_user_name_from_telegram_id(user_id)
+    context = get_relevant_context(user_name, query_text)
     
     memory_context = ""
     if context:
@@ -709,6 +720,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         registered_users[user_id] = user_info
         store_user_profile(user_id, user_info)
         
+        # FIXED: Use the actual user_name for chat history
+        user_name = user_data["user_name"]
+        registration_msg = f"User {user_name} registered via Telegram from {user_data.get('district', 'Unknown')} district"
+        add_to_conversation(user_name, human_message=registration_msg)
+        
         # Clear state
         del user_states[user_id]
         
@@ -792,10 +808,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         # Extract Malayalam response
         malayalam_diagnosis = extract_malayalam_response(diagnosis)
         
-        # Add to conversation history
+        # FIXED: Use the actual user_name for chat history
+        user_name = get_user_name_from_telegram_id(user_id)
         human_msg = f"Analyzed leaf image via Telegram"
-        ai_msg = f"Image analysis and diagnosis provided"
-        add_to_conversation(user_id, human_message=human_msg, ai_message=ai_msg)
+        ai_msg = f"Image analysis and diagnosis provided: {malayalam_diagnosis[:100]}..."
+        add_to_conversation(user_name, human_message=human_msg, ai_message=ai_msg)
         
         # Clear user state
         if user_id in user_states:
@@ -891,8 +908,9 @@ async def process_text_description(update: Update, context: ContextTypes.DEFAULT
         # Extract Malayalam response
         malayalam_diagnosis = extract_malayalam_response(diagnosis)
         
-        # Add to conversation history
-        add_to_conversation(user_id, human_message=f"Text description: {description}", ai_message=diagnosis)
+        # FIXED: Use the actual user_name for chat history
+        user_name = get_user_name_from_telegram_id(user_id)
+        add_to_conversation(user_name, human_message=f"Text description: {description}", ai_message=diagnosis)
         
         # Clear user state
         if user_id in user_states:
@@ -933,8 +951,9 @@ async def process_voice_description(update: Update, context: ContextTypes.DEFAUL
         # Extract Malayalam response
         malayalam_diagnosis = extract_malayalam_response(diagnosis)
         
-        # Add to conversation history
-        add_to_conversation(user_id, human_message=f"Voice description: {description}", ai_message=diagnosis)
+        # FIXED: Use the actual user_name for chat history
+        user_name = get_user_name_from_telegram_id(user_id)
+        add_to_conversation(user_name, human_message=f"Voice description: {description}", ai_message=diagnosis)
         
         # Clear user state
         if user_id in user_states:
@@ -972,8 +991,9 @@ async def process_text_question(update: Update, context: ContextTypes.DEFAULT_TY
         # Extract Malayalam response
         malayalam_response = extract_malayalam_response(response)
         
-        # Add to conversation history
-        add_to_conversation(user_id, human_message=question, ai_message=response)
+        # FIXED: Use the actual user_name for chat history
+        user_name = get_user_name_from_telegram_id(user_id)
+        add_to_conversation(user_name, human_message=question, ai_message=response)
         
         # Clear user state if it exists
         if user_id in user_states:
@@ -1011,8 +1031,9 @@ async def process_voice_question(update: Update, context: ContextTypes.DEFAULT_T
         # Extract Malayalam response
         malayalam_response = extract_malayalam_response(response)
         
-        # Add to conversation history
-        add_to_conversation(user_id, human_message=question, ai_message=response)
+        # FIXED: Use the actual user_name for chat history
+        user_name = get_user_name_from_telegram_id(user_id)
+        add_to_conversation(user_name, human_message=question, ai_message=response)
         
         # Clear user state
         if user_id in user_states:
@@ -1102,7 +1123,7 @@ def root():
             "malayalam_tts": "Voice responses in Malayalam",
             "user_profiles": "Profile management through chat"
         },
-        "status": "Running with Telegram Bot Integration"
+        "status": "Running with Telegram Bot Integration - Chat History Fixed"
     }
 
 @app.post("/webhook")
