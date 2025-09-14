@@ -50,13 +50,14 @@ genai.configure(api_key=GEMINI_API_KEY)
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
-)
+)  # ADD this closing parenthesis
 logger = logging.getLogger(__name__)
 
 neo4j_graph = Neo4jGraph(
     url="bolt://neo4j:7687",
     username="neo4j",
-    password="reform-william-center-vibrate-press-5829"
+    password="reform-william-center-vibrate-press-5829",
+    database="neo4j"
 )
 
 neo4j_driver = GraphDatabase.driver(
@@ -85,6 +86,15 @@ registered_users = {}
 user_sessions = {}
 user_states = {}  # Track user registration states for Telegram
 
+# ADD: canonical user key helper (below registered_users / user_sessions)
+def get_user_key(telegram_user_id: str = None, api_user_name: str = None) -> str:
+    # Telegram flows: always use numeric Telegram user_id as the storage key
+    if telegram_user_id is not None:
+        return str(telegram_user_id)
+    # HTTP API flows: registration uses user_name as user_id, keep that
+    return str(api_user_name) if api_user_name is not None else "unknown_user"
+
+
 def get_or_create_session_id(user_name: str) -> str:
     """Get existing session ID or create new one for user"""
     if user_name not in user_sessions:
@@ -92,13 +102,23 @@ def get_or_create_session_id(user_name: str) -> str:
         print(f"Created session ID {user_sessions[user_name]} for user {user_name}")
     return user_sessions[user_name]
 
-def get_chat_memory(user_name: str) -> Neo4jChatMessageHistory:
-    """Get Neo4j chat memory for specific user"""
-    session_id = get_or_create_session_id(user_name)
+# def get_chat_memory(user_name: str) -> Neo4jChatMessageHistory:
+#     """Get Neo4j chat memory for specific user"""
+#     session_id = get_or_create_session_id(user_name)
+#     return Neo4jChatMessageHistory(
+#         session_id=session_id,
+#         graph=neo4j_graph
+#     )
+
+# REPLACE the function signature and body of get_chat_memory
+def get_chat_memory(user_key: str) -> Neo4jChatMessageHistory:
+    """Get Neo4j chat memory for specific user (canonical key)"""
+    session_id = get_or_create_session_id(user_key)
     return Neo4jChatMessageHistory(
         session_id=session_id,
         graph=neo4j_graph
     )
+
 
 def store_user_profile(user_id: str, profile_data: Dict[str, Any]):
     """Store user profile in Neo4j"""
@@ -179,10 +199,10 @@ def get_user_name_from_telegram_id(telegram_user_id: str) -> str:
         return registered_users[telegram_user_id].get("user_name", telegram_user_id)
     return telegram_user_id
 
-def get_conversation_history(user_name: str) -> list:
+def get_conversation_history(user_key: str) -> list:
     """Get conversation history using LangChain Neo4j memory"""
     try:
-        chat_memory = get_chat_memory(user_name)
+        chat_memory = get_chat_memory(user_key)
         messages = chat_memory.messages
         
         history = []
@@ -205,30 +225,46 @@ def get_conversation_history(user_name: str) -> list:
         print(f"Error getting conversation history: {e}")
         return []
 
-def add_to_conversation(user_name: str, human_message: str = None, ai_message: str = None):
+# def add_to_conversation(user_name: str, human_message: str = None, ai_message: str = None):
+#     """Add message to conversation history"""
+#     try:
+#         chat_memory = get_chat_memory(user_name)
+        
+#         if human_message:
+#             chat_memory.add_user_message(human_message)
+#             print(f"Added human message for {user_name}")
+        
+#         if ai_message:
+#             chat_memory.add_ai_message(ai_message)
+#             print(f"Added AI message for {user_name}")
+        
+#         return True
+#     except Exception as e:
+#         print(f"Error adding to conversation: {e}")
+#         return False
+
+# REPLACE add_to_conversation
+def add_to_conversation(user_key: str, human_message: str = None, ai_message: str = None):
     """Add message to conversation history"""
     try:
-        chat_memory = get_chat_memory(user_name)
-        
+        chat_memory = get_chat_memory(user_key)
         if human_message:
             chat_memory.add_user_message(human_message)
-            print(f"Added human message for {user_name}")
-        
+            print(f"Added human message for {user_key}")
         if ai_message:
             chat_memory.add_ai_message(ai_message)
-            print(f"Added AI message for {user_name}")
-        
+            print(f"Added AI message for {user_key}")
         return True
     except Exception as e:
-        print(f"Error adding to conversation: {e}")
+        logger.exception(f"Error adding to conversation for {user_key}: {e}")
         return False
 
-def get_relevant_context(user_name: str, query: str) -> str:
+def get_relevant_context(user_key: str, query: str) -> str:
     """Get relevant context from user's conversation history"""
     try:
-        history = get_conversation_history(user_name)
+        history = get_conversation_history(user_key)
         
-        profile = get_user_profile(user_name)
+        profile = get_user_profile(user_key)
         context_parts = []
         
         if profile:
@@ -411,8 +447,10 @@ def diagnose_leaf(state: PestState) -> Dict[str, Any]:
         return {"error": "No description available for diagnosis.", "user_id": user_id}
     
     # FIXED: Get the actual user_name for context retrieval
-    user_name = get_user_name_from_telegram_id(user_id)
-    context = get_relevant_context(user_name, description)
+    # user_name = get_user_name_from_telegram_id(user_id)
+    # context = get_relevant_context(user_name, description)
+    user_key = get_user_key(telegram_user_id=user_id)
+    context = get_relevant_context(user_key, description)
     
     memory_context = ""
     if context:
@@ -477,8 +515,11 @@ def process_query(state: QueryState) -> Dict[str, Any]:
         return {"error": "No query text provided.", "user_id": user_id}
     
     # FIXED: Get the actual user_name for context retrieval
-    user_name = get_user_name_from_telegram_id(user_id)
-    context = get_relevant_context(user_name, query_text)
+    # user_name = get_user_name_from_telegram_id(user_id)
+    # context = get_relevant_context(user_name, query_text)
+
+    user_key = get_user_key(telegram_user_id=user_id)
+    context = get_relevant_context(user_key, query_text)
     
     memory_context = ""
     if context:
@@ -721,9 +762,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         store_user_profile(user_id, user_info)
         
         # FIXED: Use the actual user_name for chat history
-        user_name = user_data["user_name"]
-        registration_msg = f"User {user_name} registered via Telegram from {user_data.get('district', 'Unknown')} district"
-        add_to_conversation(user_name, human_message=registration_msg)
+        # user_name = user_data["user_name"]
+        # registration_msg = f"User {user_name} registered via Telegram from {user_data.get('district', 'Unknown')} district"
+        # add_to_conversation(user_name, human_message=registration_msg)
+        registration_msg = f"User {user_data['user_name']} registered via Telegram from {user_data.get('district', 'Unknown')} district"
+        add_to_conversation(get_user_key(telegram_user_id=user_id), human_message=registration_msg) 
         
         # Clear state
         del user_states[user_id]
@@ -809,10 +852,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         malayalam_diagnosis = extract_malayalam_response(diagnosis)
         
         # FIXED: Use the actual user_name for chat history
-        user_name = get_user_name_from_telegram_id(user_id)
-        human_msg = f"Analyzed leaf image via Telegram"
+        # user_name = get_user_name_from_telegram_id(user_id)
+        # human_msg = f"Analyzed leaf image via Telegram"
+        # ai_msg = f"Image analysis and diagnosis provided: {malayalam_diagnosis[:100]}..."
+        # add_to_conversation(user_name, human_message=human_msg, ai_message=ai_msg)
+
+        human_msg = "Analyzed leaf image via Telegram"
         ai_msg = f"Image analysis and diagnosis provided: {malayalam_diagnosis[:100]}..."
-        add_to_conversation(user_name, human_message=human_msg, ai_message=ai_msg)
+        add_to_conversation(get_user_key(telegram_user_id=user_id), human_message=human_msg, ai_message=ai_msg)
         
         # Clear user state
         if user_id in user_states:
@@ -909,8 +956,9 @@ async def process_text_description(update: Update, context: ContextTypes.DEFAULT
         malayalam_diagnosis = extract_malayalam_response(diagnosis)
         
         # FIXED: Use the actual user_name for chat history
-        user_name = get_user_name_from_telegram_id(user_id)
-        add_to_conversation(user_name, human_message=f"Text description: {description}", ai_message=diagnosis)
+        # user_name = get_user_name_from_telegram_id(user_id)
+        # add_to_conversation(user_name, human_message=f"Text description: {description}", ai_message=diagnosis)
+        add_to_conversation(get_user_key(telegram_user_id=user_id), human_message=f"Text description: {description}", ai_message=diagnosis)
         
         # Clear user state
         if user_id in user_states:
@@ -952,8 +1000,9 @@ async def process_voice_description(update: Update, context: ContextTypes.DEFAUL
         malayalam_diagnosis = extract_malayalam_response(diagnosis)
         
         # FIXED: Use the actual user_name for chat history
-        user_name = get_user_name_from_telegram_id(user_id)
-        add_to_conversation(user_name, human_message=f"Voice description: {description}", ai_message=diagnosis)
+        #user_name = get_user_name_from_telegram_id(user_id)
+        # add_to_conversation(user_name, human_message=f"Voice description: {description}", ai_message=diagnosis)
+        add_to_conversation(get_user_key(telegram_user_id=user_id), human_message=f"Voice description: {description}", ai_message=diagnosis)
         
         # Clear user state
         if user_id in user_states:
@@ -992,8 +1041,9 @@ async def process_text_question(update: Update, context: ContextTypes.DEFAULT_TY
         malayalam_response = extract_malayalam_response(response)
         
         # FIXED: Use the actual user_name for chat history
-        user_name = get_user_name_from_telegram_id(user_id)
-        add_to_conversation(user_name, human_message=question, ai_message=response)
+        #user_name = get_user_name_from_telegram_id(user_id)
+        # add_to_conversation(user_name, human_message=question, ai_message=response)
+        add_to_conversation(get_user_key(telegram_user_id=user_id), human_message=question, ai_message=response)
         
         # Clear user state if it exists
         if user_id in user_states:
@@ -1032,8 +1082,9 @@ async def process_voice_question(update: Update, context: ContextTypes.DEFAULT_T
         malayalam_response = extract_malayalam_response(response)
         
         # FIXED: Use the actual user_name for chat history
-        user_name = get_user_name_from_telegram_id(user_id)
-        add_to_conversation(user_name, human_message=question, ai_message=response)
+        #user_name = get_user_name_from_telegram_id(user_id)
+        # add_to_conversation(user_name, human_message=question, ai_message=response)
+        add_to_conversation(get_user_key(telegram_user_id=user_id), human_message=question, ai_message=response)
         
         # Clear user state
         if user_id in user_states:
@@ -1239,6 +1290,11 @@ async def analyze_leaf(
             ai_message=ai_msg
         )
         
+        if not chat_stored:
+            logger.error(f"Failed to write chat history for {user_name}")
+            # Optional: Surface the error to the user
+            raise HTTPException(status_code=500, detail="Analysis completed but failed to save chat history")
+
         return JSONResponse({
             "success": True,
             "message": f"Analysis completed using {final_source} description",
@@ -1314,6 +1370,10 @@ async def analyze_leaf_with_voice(
             human_message=human_msg,
             ai_message=ai_msg
         )
+        if not chat_stored:
+            logger.error(f"Failed to write chat history for {user_name}")
+            # Optional: Surface the error to the user
+            raise HTTPException(status_code=500, detail="Analysis completed but failed to save chat history")
         
         return JSONResponse({
             "success": True,
@@ -1372,6 +1432,11 @@ async def analyze_text_only(
             human_message=human_msg,
             ai_message=ai_msg
         )
+
+        if not chat_stored:
+            logger.error(f"Failed to write chat history for {user_name}")
+            # Optional: Surface the error to the user
+            raise HTTPException(status_code=500, detail="Analysis completed but failed to save chat history")
         
         return JSONResponse({
             "success": True,
@@ -1425,6 +1490,10 @@ async def handle_query(user_name: str = Form(...), audio: UploadFile = File(...)
             ai_message=llm_response
         )
         
+        if not chat_stored:
+            logger.error(f"Failed to write chat history for {user_name}")
+            raise HTTPException(status_code=500, detail="Query processed but failed to save to chat history")
+
         return JSONResponse({
             "success": True,
             "message": f"Query processed and added to chat history for {user_name}",
